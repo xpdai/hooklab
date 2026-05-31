@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hooklab</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--border:#262b36;--fg:#e6e9ef;--muted:#8b93a7;--accent:#5b9cff;--green:#36c08a;--red:#ff5d5d;--amber:#f0b860;}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,Segoe UI,Roboto,'Microsoft JhengHei',sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+header h1{font-size:16px;margin:0;color:var(--accent)}
+input,button,select,textarea{font:inherit;color:var(--fg);background:#0c0e13;border:1px solid var(--border);border-radius:6px;padding:6px 8px}
+button{cursor:pointer;background:#222836}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.danger{color:var(--red);border-color:#5a2a2a}
+.row{display:flex;gap:8px;align-items:center}
+.muted{color:var(--muted)}
+main{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 54px)}
+#list{overflow:auto;border-right:1px solid var(--border)}
+.item{padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer}
+.item:hover{background:#1b1f29}
+.item.sel{background:#202636}
+.method{font-weight:700;padding:1px 6px;border-radius:4px;font-size:12px}
+.m-get{color:#36c08a}.m-post{color:#5b9cff}.m-put{color:#f0b860}.m-delete{color:#ff5d5d}.m-other{color:#b08bff}
+#detail{overflow:auto;padding:16px}
+.kv{display:grid;grid-template-columns:220px 1fr;gap:4px 12px;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+.kv .k{color:var(--muted);word-break:break-all}
+.kv .v{word-break:break-all}
+pre{background:#0c0e13;border:1px solid var(--border);border-radius:6px;padding:12px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:0}
+.tag{font-size:12px;color:var(--muted)}
+.section{margin-top:18px}
+.section h3{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:10px;width:min(720px,92vw);padding:0}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.dlg-head{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.dlg-body{padding:16px;display:flex;flex-direction:column;gap:10px;max-height:80vh;overflow:auto}
+textarea{width:100%;min-height:80px;font-family:ui-monospace,Consolas,monospace;resize:vertical}
+label{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
+.resp-ok{color:var(--green)}.resp-err{color:var(--red)}
+.empty{color:var(--muted);padding:40px;text-align:center}
+code{font-family:ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+<header>
+  <h1>🪝 hooklab</h1>
+  <div class="row">
+    <label style="margin:0">target</label>
+    <input id="target" placeholder="http://localhost:3000" style="width:240px">
+    <label class="row" style="margin:0;gap:4px"><input type="checkbox" id="auto"> auto-forward</label>
+    <button id="saveCfg">儲存</button>
+  </div>
+  <div class="row" style="margin-left:auto">
+    <span class="muted" id="count">0 筆</span>
+    <button id="compose">✏️ 自訂送出</button>
+    <button class="danger" id="clear">清空</button>
+  </div>
+</header>
+<main>
+  <div id="list"></div>
+  <div id="detail"><div class="empty">左邊點一個請求看內容，或按「✏️ 自訂送出」手動發一個請求。</div></div>
+</main>
+
+<dialog id="composer">
+  <div class="dlg-head"><strong>自訂 / 編輯後送出</strong><button id="closeDlg">✕</button></div>
+  <div class="dlg-body">
+    <div class="row">
+      <div style="flex:0 0 120px"><label>method</label>
+        <select id="c_method"><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div>
+      <div style="flex:1"><label>path（可含 ?query）</label><input id="c_path" style="width:100%" placeholder="/webhook"></div>
+    </div>
+    <div><label>target 覆寫（留空則用上方設定）</label><input id="c_target" style="width:100%" placeholder="http://localhost:3000"></div>
+    <div><label>headers（每行一個 Key: Value）</label><textarea id="c_headers" placeholder="Content-Type: application/json"></textarea></div>
+    <div><label>body</label><textarea id="c_body" style="min-height:120px"></textarea></div>
+    <div class="row"><button class="primary" id="doSend">送出 →</button><span id="sendState" class="muted"></span></div>
+    <div id="respBox" style="display:none">
+      <div class="section"><h3>回應</h3><div id="respMeta"></div><pre id="respBody" style="margin-top:8px"></pre></div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+const api = '/__hooklab/api';
+let selected = null;
+let cache = [];
+
+function mClass(m){m=(m||'').toUpperCase();return ({GET:'m-get',POST:'m-post',PUT:'m-put',DELETE:'m-delete'})[m]||'m-other';}
+function fmtTime(ms){try{return new Date(ms).toLocaleTimeString();}catch(e){return '';}}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+async function loadConfig(){
+  try{
+    const c = await (await fetch(api+'/config')).json();
+    document.getElementById('target').value = c.target||'';
+    document.getElementById('auto').checked = !!c.auto_forward;
+  }catch(e){}
+}
+async function saveConfig(){
+  const body = {target: document.getElementById('target').value, auto_forward: document.getElementById('auto').checked};
+  await fetch(api+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+}
+async function loadList(){
+  try{
+    const data = await (await fetch(api+'/requests')).json();
+    cache = data;
+    document.getElementById('count').textContent = data.length+' 筆';
+    const el = document.getElementById('list');
+    el.innerHTML = data.map(r=>`<div class="item ${selected===r.id?'sel':''}" data-id="${r.id}">
+      <div class="row" style="justify-content:space-between">
+        <span class="method ${mClass(r.method)}">${esc(r.method)}</span>
+        <span class="tag">${fmtTime(r.timestamp_ms)}</span></div>
+      <div style="font-family:monospace;font-size:12px;margin-top:2px;word-break:break-all">${esc(r.path)}${r.query?'?'+esc(r.query):''}</div>
+    </div>`).join('') || '<div class="empty">還沒有請求。<br>把 webhook 送到本服務根網址試試。</div>';
+    el.querySelectorAll('.item').forEach(n=>n.onclick=()=>select(+n.dataset.id));
+  }catch(e){}
+}
+function select(id){
+  selected=id; renderDetail();
+  document.querySelectorAll('.item').forEach(n=>n.classList.toggle('sel',+n.dataset.id===id));
+}
+function renderDetail(){
+  const r = cache.find(x=>x.id===selected);
+  const d = document.getElementById('detail');
+  if(!r){d.innerHTML='<div class="empty">找不到</div>';return;}
+  const headers = r.headers.map(([k,v])=>`<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join('');
+  d.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div class="row"><span class="method ${mClass(r.method)}" style="font-size:15px">${esc(r.method)}</span>
+        <code style="font-size:14px">${esc(r.path)}${r.query?'?'+esc(r.query):''}</code></div>
+      <span class="tag">#${r.id} · ${fmtTime(r.timestamp_ms)}</span>
+    </div>
+    <div class="row" style="margin-top:12px;gap:8px">
+      <button class="primary" id="fwd">▶ 轉發 / 重放到 target</button>
+      <button id="edit">✏️ 編輯後送出</button>
+    </div>
+    <div id="fwdResp"></div>
+    <div class="section"><h3>Headers</h3><div class="kv">${headers||'<span class=tag>（無）</span>'}</div></div>
+    <div class="section"><h3>Body ${r.body_is_binary?'<span class=tag>(binary)</span>':''}</h3><pre>${esc(r.body)||'<span class=tag>（空）</span>'}</pre></div>`;
+  document.getElementById('fwd').onclick=()=>forwardCaptured(r.id);
+  document.getElementById('edit').onclick=()=>openComposer(r);
+}
+async function forwardCaptured(id){
+  const box=document.getElementById('fwdResp');
+  box.innerHTML='<div class="muted" style="margin-top:8px">轉發中…</div>';
+  try{
+    const res = await (await fetch(api+'/requests/'+id+'/forward',{method:'POST'})).json();
+    box.innerHTML = renderResp(res);
+  }catch(e){ box.innerHTML='<pre class="resp-err">'+esc(e)+'</pre>'; }
+}
+function renderResp(res){
+  if(res.error) return `<pre class="resp-err" style="margin-top:8px">⚠ ${esc(res.error)}\n${esc(res.url||'')}</pre>`;
+  const hs = res.headers.map(([k,v])=>`${esc(k)}: ${esc(v)}`).join('\n');
+  const ok = res.status<400;
+  return `<div class="section"><div class="${ok?'resp-ok':'resp-err'}">← ${res.status} · ${esc(res.url)}</div>
+    <pre style="margin-top:8px">${hs}\n\n${esc(res.body)}</pre></div>`;
+}
+
+const dlg=document.getElementById('composer');
+function openComposer(r){
+  document.getElementById('c_method').value = r ? r.method : 'POST';
+  document.getElementById('c_path').value = r ? (r.path+(r.query?'?'+r.query:'')) : '/webhook';
+  document.getElementById('c_target').value='';
+  document.getElementById('c_headers').value = r ? r.headers.map(([k,v])=>k+': '+v).join('\n') : 'Content-Type: application/json';
+  document.getElementById('c_body').value = r ? (r.body_is_binary?'':r.body) : '';
+  document.getElementById('respBox').style.display='none';
+  document.getElementById('sendState').textContent='';
+  dlg.showModal();
+}
+function parseHeaders(t){
+  return t.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+    const i=l.indexOf(':');
+    return i<0?[l,'']:[l.slice(0,i).trim(),l.slice(i+1).trim()];
+  });
+}
+async function doSend(){
+  const body={
+    method:document.getElementById('c_method').value,
+    path:document.getElementById('c_path').value||'/',
+    target:document.getElementById('c_target').value||null,
+    headers:parseHeaders(document.getElementById('c_headers').value),
+    body:document.getElementById('c_body').value
+  };
+  document.getElementById('sendState').textContent='送出中…';
+  try{
+    const res=await (await fetch(api+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    document.getElementById('sendState').textContent='';
+    document.getElementById('respBox').style.display='block';
+    const ok=!res.error && res.status<400;
+    document.getElementById('respMeta').innerHTML = res.error
+      ? `<span class="resp-err">⚠ ${esc(res.error)} ${esc(res.url||'')}</span>`
+      : `<span class="${ok?'resp-ok':'resp-err'}">← ${res.status} · ${esc(res.url)}</span>`;
+    document.getElementById('respBody').textContent = res.error
+      ? (res.url||'')
+      : (res.headers.map(([k,v])=>k+': '+v).join('\n')+'\n\n'+res.body);
+  }catch(e){
+    document.getElementById('sendState').textContent='';
+    document.getElementById('respBox').style.display='block';
+    document.getElementById('respMeta').innerHTML='<span class="resp-err">⚠ '+esc(e)+'</span>';
+    document.getElementById('respBody').textContent='';
+  }
+}
+
+document.getElementById('saveCfg').onclick=saveConfig;
+document.getElementById('clear').onclick=async()=>{
+  await fetch(api+'/requests',{method:'DELETE'});
+  selected=null;
+  document.getElementById('detail').innerHTML='<div class="empty">已清空</div>';
+  loadList();
+};
+document.getElementById('compose').onclick=()=>openComposer(null);
+document.getElementById('closeDlg').onclick=()=>dlg.close();
+document.getElementById('doSend').onclick=doSend;
+
+loadConfig();
+loadList();
+setInterval(loadList,2000);
+</script>
+</body>
+</html>
