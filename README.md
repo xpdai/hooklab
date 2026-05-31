@@ -2,77 +2,84 @@
 
 [![CI](https://github.com/xpdai/hooklab/actions/workflows/ci.yml/badge.svg)](https://github.com/xpdai/hooklab/actions/workflows/ci.yml)
 
-本地 webhook 攔截 / 檢視 / 轉發 / 重放工具。單一 Rust 執行檔，零外部依賴、零雲端。
+**English** | [繁體中文](README.zh-TW.md)
 
-開發 webhook（金流回呼、第三方通知）時的痛點：對方打的是公開網址、你的程式在 localhost、而且事件不能隨便重來。hooklab 把整個除錯流程包成一個本地工具。
+A local webhook capture / inspect / forward / replay tool. Single Rust binary, no external services, no cloud.
 
-## 功能
+Developing against webhooks (payment callbacks, third-party notifications) is painful: the sender hits a public URL, your code runs on localhost, and you can't just replay events at will. hooklab wraps that whole debugging loop into one local tool.
 
-- **攔截**：任何打進來的 HTTP 請求（任意 method / 路徑）全部記錄 —— method、path、query、headers、body。
-- **檢視**：內建 Web UI，即時列表 + 詳情。
-- **轉發 / 重放**：一鍵把攔到的請求轉發到你的 localhost，看回應；同一個請求想打幾次打幾次。
-- **編輯後送出**：改 method / headers / body 再送，測你的程式各種情況（例如把「付款成功」改成「金額 0」）。
-- **auto-forward（穿透代理）**：開啟後，每個攔到的請求自動轉發到 target，並把回應原樣回給來源。
+## Features
 
-## 建置
+- **Capture** — records every incoming HTTP request (any method / path): method, path, query, headers, body.
+- **Inspect** — built-in web UI with a live list and a detail view.
+- **Forward / replay** — one click forwards a captured request to your localhost and shows the response; replay the same request as many times as you want.
+- **Edit & send** — tweak method / headers / body and resend to exercise every code path (e.g. flip a "payment succeeded" into "amount 0").
+- **auto-forward (transparent proxy)** — when on, every captured request is forwarded to the target automatically and the response is passed straight back to the caller.
+
+## Build
 
 ```sh
 cargo build --release
-# 產物：target/release/hooklab.exe
+# output: target/release/hooklab (hooklab.exe on Windows)
 ```
 
-## 使用
+## Usage
 
 ```sh
 hooklab --port 4500 --target http://localhost:3000
 ```
 
-| 選項 | 說明 | 預設 |
-|------|------|------|
-| `-p, --port <PORT>` | 監聽 port | `4500` |
-| `-t, --target <URL>` | 轉發目標 | 無（可在 UI 設定） |
-| `-s, --store <FILE>` | 把攔截的請求持久化到 JSONL 檔，重啟自動載回 | 無（純記憶體） |
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-p, --port <PORT>` | Listen port | `4500` |
+| `-t, --target <URL>` | Forward target | none (settable in the UI) |
+| `-s, --store <FILE>` | Persist captured requests to a JSONL file, reloaded on restart | none (in-memory only) |
 
-啟動後：
+Once running:
 
-- **UI**：<http://localhost:4500/__hooklab>
-- **攔截端點**：把 webhook 送到 `http://localhost:4500/<任意路徑>`
+- **UI**: <http://localhost:4500/__hooklab>
+- **Capture endpoint**: send webhooks to `http://localhost:4500/<any-path>`
 
-`target` 與 auto-forward 也可在 UI 上即時調整，不必重啟。
+`target` and auto-forward can also be changed live in the UI without restarting.
 
-## 接真實第三方 webhook（Stripe / 綠界 / LINE…）
+## Receiving real third-party webhooks (Stripe / LINE / …)
 
-真實的 webhook 來源在公網，打不到你的 `localhost`。hooklab 本身就是個普通 HTTP server，
-**前面套任何穿透工具就能收公網 webhook**，不需要它內建 relay：
+Real webhook senders live on the public internet and can't reach your `localhost`.
+hooklab is just a plain HTTP server, so **putting any tunnel in front of it lets you
+receive public webhooks** — no built-in relay required:
 
 ```sh
-# 1. 跑 hooklab
+# 1. Run hooklab
 hooklab --port 4500 --target http://localhost:3000
 
-# 2. 另開一個視窗，用 cloudflared（或 ngrok）把它暴露到公網
+# 2. In another shell, expose it with cloudflared (or ngrok)
 cloudflared tunnel --url http://localhost:4500
-#   → 會給你一個 https://xxxx.trycloudflare.com 網址
+#   → gives you a https://xxxx.trycloudflare.com URL
 
-# 3. 把第三方平台的 webhook 設成 https://xxxx.trycloudflare.com/<你的路徑>
+# 3. Point the provider's webhook at https://xxxx.trycloudflare.com/<your-path>
 ```
 
-之後所有公網 webhook 都會進 hooklab，可即時檢視、重放、編輯重送，
-開 auto-forward 還能直接代理到你正在開發的 localhost 服務。
+Every public webhook now lands in hooklab — inspect, replay, edit & resend live,
+and with auto-forward on it proxies straight through to your local service.
 
 ## API
 
-| Method | 路徑 | 說明 |
-|--------|------|------|
-| `GET` | `/__hooklab/api/requests` | 列出攔截到的請求（新到舊） |
-| `GET` | `/__hooklab/api/requests/:id` | 單筆詳情 |
-| `DELETE` | `/__hooklab/api/requests` | 清空 |
-| `POST` | `/__hooklab/api/requests/:id/forward` | 把某筆轉發到 target |
-| `POST` | `/__hooklab/api/send` | 自訂 / 編輯後送出 |
-| `GET` / `POST` | `/__hooklab/api/config` | 讀取 / 設定 target 與 auto-forward |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/__hooklab/api/requests` | List captured requests (newest first) |
+| `GET` | `/__hooklab/api/requests/:id` | Single request detail |
+| `DELETE` | `/__hooklab/api/requests` | Clear all |
+| `POST` | `/__hooklab/api/requests/:id/forward` | Forward a captured request to the target |
+| `POST` | `/__hooklab/api/send` | Custom / edited send |
+| `GET` / `POST` | `/__hooklab/api/config` | Get / set target and auto-forward |
 
-## 已知限制（MVP）
+## Known limitations (MVP)
 
-- 記憶體保留最近 500 筆（環狀緩衝）；加 `--store` 可持久化到磁碟、重啟自動載回。
-- target 走 HTTP（轉發給 localhost 用，未編譯 TLS，不支援 https target）。
-- binary body 只記錄大小，不重放原始 bytes。
-- 保留路徑 `/__hooklab` 不會被攔截 —— 若你的 webhook 剛好用到這個前綴需另外處理。
+- Keeps the most recent 500 requests in memory (ring buffer); pass `--store` to persist to disk and reload on restart.
+- The target uses plain HTTP (intended for localhost; TLS is not compiled in, so https targets are unsupported).
+- Binary bodies only record their size and are not replayed byte-for-byte.
+- The reserved path `/__hooklab` is not captured — handle separately if your webhook happens to use that prefix.
+
+## License
+
+MIT
