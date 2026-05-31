@@ -1,5 +1,7 @@
 # 🪝 hooklab
 
+[![CI](https://github.com/xpdai/hooklab/actions/workflows/ci.yml/badge.svg)](https://github.com/xpdai/hooklab/actions/workflows/ci.yml)
+
 本地 webhook 攔截 / 檢視 / 轉發 / 重放工具。單一 Rust 執行檔，零外部依賴、零雲端。
 
 開發 webhook（金流回呼、第三方通知）時的痛點：對方打的是公開網址、你的程式在 localhost、而且事件不能隨便重來。hooklab 把整個除錯流程包成一個本地工具。
@@ -29,6 +31,7 @@ hooklab --port 4500 --target http://localhost:3000
 |------|------|------|
 | `-p, --port <PORT>` | 監聽 port | `4500` |
 | `-t, --target <URL>` | 轉發目標 | 無（可在 UI 設定） |
+| `-s, --store <FILE>` | 把攔截的請求持久化到 JSONL 檔，重啟自動載回 | 無（純記憶體） |
 
 啟動後：
 
@@ -36,6 +39,25 @@ hooklab --port 4500 --target http://localhost:3000
 - **攔截端點**：把 webhook 送到 `http://localhost:4500/<任意路徑>`
 
 `target` 與 auto-forward 也可在 UI 上即時調整，不必重啟。
+
+## 接真實第三方 webhook（Stripe / 綠界 / LINE…）
+
+真實的 webhook 來源在公網，打不到你的 `localhost`。hooklab 本身就是個普通 HTTP server，
+**前面套任何穿透工具就能收公網 webhook**，不需要它內建 relay：
+
+```sh
+# 1. 跑 hooklab
+hooklab --port 4500 --target http://localhost:3000
+
+# 2. 另開一個視窗，用 cloudflared（或 ngrok）把它暴露到公網
+cloudflared tunnel --url http://localhost:4500
+#   → 會給你一個 https://xxxx.trycloudflare.com 網址
+
+# 3. 把第三方平台的 webhook 設成 https://xxxx.trycloudflare.com/<你的路徑>
+```
+
+之後所有公網 webhook 都會進 hooklab，可即時檢視、重放、編輯重送，
+開 auto-forward 還能直接代理到你正在開發的 localhost 服務。
 
 ## API
 
@@ -50,7 +72,7 @@ hooklab --port 4500 --target http://localhost:3000
 
 ## 已知限制（MVP）
 
-- 請求只存在記憶體（環狀緩衝，預設保留最近 500 筆），重啟即清空。
+- 記憶體保留最近 500 筆（環狀緩衝）；加 `--store` 可持久化到磁碟、重啟自動載回。
 - target 走 HTTP（轉發給 localhost 用，未編譯 TLS，不支援 https target）。
 - binary body 只記錄大小，不重放原始 bytes。
 - 保留路徑 `/__hooklab` 不會被攔截 —— 若你的 webhook 剛好用到這個前綴需另外處理。

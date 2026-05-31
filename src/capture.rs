@@ -22,7 +22,12 @@ pub async fn capture(
 ) -> Response {
     let header_vec: Vec<(String, String)> = headers
         .iter()
-        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("<binary>").to_string()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                v.to_str().unwrap_or("<binary>").to_string(),
+            )
+        })
         .collect();
 
     let (body_str, is_bin) = match std::str::from_utf8(&body) {

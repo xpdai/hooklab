@@ -86,7 +86,16 @@ pub async fn forward_captured(
     } else {
         format!("{}?{}", req.path, req.query)
     };
-    Json(forward(&target, &req.method, &pq, &req.headers, req.body.into_bytes()).await)
+    Json(
+        forward(
+            &target,
+            &req.method,
+            &pq,
+            &req.headers,
+            req.body.into_bytes(),
+        )
+        .await,
+    )
 }
 
 #[derive(Deserialize)]
